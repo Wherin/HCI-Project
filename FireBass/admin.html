@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Consultant Admin Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="top-banner">
+    <div class="banner-brand">
+      <h1>Consultant Dashboard</h1>
+      <p>Manage student inquiries and active threads</p>
+    </div>
+  </header>
+
+  <!-- Consultant Identity Config Box -->
+  <div class="form-card" style="margin-bottom: 20px;">
+    <label for="consultantDisplayName" style="font-weight: 600; font-size: 0.875rem;">Your Display Name (shown to students):</label>
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 6px;">
+      <input type="text" id="consultantDisplayName" value="Academic Advisor" placeholder="e.g., Advisor Alex or leave blank for Anonymous" />
+      <label style="font-size: 0.85rem; white-space: nowrap; cursor: pointer;">
+        <input type="checkbox" id="anonConsultantCheck" onchange="toggleConsultantAnon(this)"> Reply as Anonymous
+      </label>
+    </div>
+  </div>
+
+  <div class="section-title">Active Consultation Threads</div>
+  
+  <!-- Each thread will be generated here as ITS OWN BOX -->
+  <div id="admin-messages">Connecting to server...</div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getFirestore, collection, onSnapshot, doc, updateDoc, deleteDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBfiUPoxWkyHsDHp8ik5zOLnVLuLvTJMuo",
+      authDomain: "test-project-6d44f.firebaseapp.com",
+      projectId: "test-project-6d44f",
+      storageBucket: "test-project-6d44f.firebasestorage.app",
+      messagingSenderId: "396341054072",
+      appId: "1:396341054072:web:7f67660251c6e319523b8d",
+      measurementId: "G-1Z4QQ01SF3"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const openCardIds = new Set();
+
+    signInAnonymously(auth).catch((err) => console.error("Auth failed:", err));
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        onSnapshot(collection(db, "consultations"), (snapshot) => {
+          const container = document.getElementById('admin-messages');
+          if (snapshot.empty) {
+            container.innerHTML = "<p style='padding: 10px; background: #fff; border-radius: 8px;'>No consultation threads found.</p>";
+            return;
+          }
+
+          container.innerHTML = "";
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            const id = docSnap.id;
+            const isResolved = data.status === "resolved";
+            const topicExcerpt = data.messages?.[0]?.text || "No topic text";
+            const isOpen = openCardIds.has(id);
+
+            let messagesHTML = (data.messages || []).map(m => `
+              <div class="msg ${m.senderRole}">
+                <div class="msg-author">${m.senderName} (${m.timestamp})</div>
+                <div>${m.text}</div>
+              </div>
+            `).join('');
+
+            // Individual thread box
+            const card = document.createElement('div');
+            card.className = `card ${isResolved ? 'resolved' : ''}`;
+            card.innerHTML = `
+              <div class="card-bar">
+                <div class="card-info">
+                  <span class="student-name">${data.senderName || 'Anonymous Student'}</span>
+                  <span class="badge ${isResolved ? 'resolved' : 'active'}">${isResolved ? 'Resolved' : 'Active'}</span>
+                  <span class="topic-preview">Topic: "${topicExcerpt}"</span>
+                </div>
+                
+                <div class="actions">
+                  <button class="btn-toggle" onclick="toggleCard('${id}')" id="toggle-btn-${id}">
+                    ${isOpen ? 'Hide Chat ▲' : 'View Chat ▼'}
+                  </button>
+                  <button class="btn-secondary" onclick="toggleResolve('${id}', '${data.status || 'active'}')">
+                    ${isResolved ? 'Reopen' : 'Mark Resolved'}
+                  </button>
+                  <button class="btn-danger" onclick="deleteThread('${id}')">Delete</button>
+                </div>
+              </div>
+
+              <div class="card-body ${isOpen ? 'open' : ''}" id="body-${id}">
+                <div class="thread">${messagesHTML}</div>
+                
+                <div class="reply-box">
+                  <textarea id="input-${id}" rows="1" placeholder="Type response..."></textarea>
+                  <button class="btn-primary" onclick="sendConsultantReply('${id}')">Send Response</button>
+                </div>
+              </div>
+            `;
+            container.appendChild(card);
+          });
+        });
+      }
+    });
+
+    window.toggleConsultantAnon = function(checkbox) {
+      const nameInput = document.getElementById('consultantDisplayName');
+      if (checkbox.checked) {
+        nameInput.dataset.previousValue = nameInput.value;
+        nameInput.value = "Anonymous Consultant";
+        nameInput.disabled = true;
+      } else {
+        nameInput.value = nameInput.dataset.previousValue || "Academic Advisor";
+        nameInput.disabled = false;
+      }
+    };
+
+    window.toggleCard = function(docId) {
+      const body = document.getElementById(`body-${docId}`);
+      const btn = document.getElementById(`toggle-btn-${docId}`);
+
+      if (openCardIds.has(docId)) {
+        openCardIds.delete(docId);
+        if (body) body.classList.remove('open');
+        if (btn) btn.innerText = "View Chat ▼";
+      } else {
+        openCardIds.add(docId);
+        if (body) body.classList.add('open');
+        if (btn) btn.innerText = "Hide Chat ▲";
+      }
+    };
+
+    window.sendConsultantReply = async function(docId) {
+      const inputEl = document.getElementById(`input-${docId}`);
+      const replyText = inputEl.value.trim();
+      if (!replyText) return;
+
+      // Determine sender display name
+      const isAnon = document.getElementById('anonConsultantCheck').checked;
+      const customName = document.getElementById('consultantDisplayName').value.trim();
+      const senderName = isAnon ? "Anonymous Consultant" : (customName || "Consultant");
+
+      try {
+        const docRef = doc(db, "consultations", docId);
+        await updateDoc(docRef, {
+          status: "active",
+          messages: arrayUnion({
+            senderRole: "consultant",
+            senderName: senderName,
+            text: replyText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          })
+        });
+        inputEl.value = "";
+        inputEl.style.height = "auto";
+      } catch (err) {
+        alert("Failed to send reply: " + err.message);
+      }
+    };
+
+    window.toggleResolve = async function(docId, currentStatus) {
+      const newStatus = currentStatus === "resolved" ? "active" : "resolved";
+      try {
+        await updateDoc(doc(db, "consultations", docId), { status: newStatus });
+      } catch (err) {
+        alert("Failed to update status: " + err.message);
+      }
+    };
+
+    window.deleteThread = async function(docId) {
+      if (!confirm("Permanently delete this consultation thread?")) return;
+      try {
+        await deleteDoc(doc(db, "consultations", docId));
+      } catch (err) {
+        alert("Failed to delete thread: " + err.message);
+      }
+    };
+
+    // Auto-expanding textarea that respects a minimum 42px height
+    document.addEventListener('input', (e) => {
+      if (e.target.tagName.toLowerCase() === 'textarea') {
+        const el = e.target;
+        el.style.height = 'auto';
+        
+        // Math.max ensures the height NEVER drops below 42px
+        const newHeight = Math.max(42, el.scrollHeight);
+        el.style.height = `${newHeight}px`;
+      }
+    });
+  </script>
+</body>
+</html>
